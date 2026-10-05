@@ -1,0 +1,64 @@
+#!/usr/bin/env perl
+use strict;
+use warnings;
+
+# A stand-in for the ssh command line, for t/11-transport-ssh.t.
+#
+#   FAKE_SSH_LOG      file every call is appended to, one argument per line,
+#                     calls separated by a line "--"
+#   FAKE_SSH_MODE     what to do once "connected":
+#                       echo    (default) print "User Name:", then answer
+#                               every line with "you said <line>" - until a
+#                               line "bye", which ends the connection
+#                       refuse  print FAKE_SSH_STDERR to standard error and
+#                               exit with 255, like ssh without a connection
+#                       silent  say nothing and wait for the end of input
+#   FAKE_SSH_STDERR   the message of "refuse"
+#   FAKE_SSH_KEX      what "-Q kex" answers, space separated; "-Q cipher",
+#                     "-Q mac" and "-Q key" answer with what the real ssh
+#                     of 2026 knows
+
+$| = 1;
+
+if ( my $log = $ENV{FAKE_SSH_LOG} ) {
+  open my $fh, '>>', $log or die 'fake-ssh: '.$log.': '.$!;
+  print {$fh} map { $_."\n" } @ARGV, '--';
+  close $fh;
+}
+
+if ( @ARGV && $ARGV[0] eq '-Q' ) {
+  my %known = (
+    kex => $ENV{FAKE_SSH_KEX}
+      || 'curve25519-sha256 diffie-hellman-group14-sha256 diffie-hellman-group-exchange-sha1 diffie-hellman-group14-sha1 diffie-hellman-group1-sha1',
+    cipher => 'aes128-ctr aes256-ctr aes128-cbc aes256-cbc 3des-cbc',
+    mac    => 'hmac-sha2-256 hmac-sha1',
+    key    => 'ssh-ed25519 ssh-rsa',
+  );
+  my $answer = $known{ $ARGV[1] } or exit 255;
+  print map { $_."\n" } split q{ }, $answer;
+  exit 0;
+}
+
+my $mode = $ENV{FAKE_SSH_MODE} || 'echo';
+
+if ( $mode eq 'refuse' ) {
+  print STDERR ( $ENV{FAKE_SSH_STDERR} || 'ssh: connect to host 192.0.2.10 port 22: Connection refused' ), "\r\n";
+  exit 255;
+}
+
+if ( $mode eq 'silent' ) {
+  1 while sysread STDIN, my $buffer, 4096;
+  exit 0;
+}
+
+print "\r\n\r\nUser Name:";
+my $pending = q{};
+while ( sysread STDIN, my $buffer, 4096 ) {
+  $pending .= $buffer;
+  while ( $pending =~ s/\A([^\r]*)\r// ) {
+    my $line = $1;
+    exit 0 if $line eq 'bye';
+    print 'you said '.$line."\r\n";
+  }
+}
+exit 0;

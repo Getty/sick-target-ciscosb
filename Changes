@@ -1,0 +1,22 @@
+Revision history for SICK-Target-CiscoSB
+
+{{$NEXT}}
+    - Initial release
+    - SICK::Target::CiscoSB: device type "cisco-sb" for SICK - certificates
+      for the web interface of Cisco Small Business switches (Sx300, SG300,
+      SG500); imports certificate and key (mode "import", the default) or
+      has the switch write a certificate request for its own key (mode
+      "csr"), makes the slot the active one and saves the configuration;
+      never sends an import the switch would answer by deleting the key of
+      the slot (a certificate that does not belong to the key)
+    - SICK::Target::CiscoSB::Session: the command line dialog - login at the
+      prompts of the switch, prompts with log lines behind them, redrawn
+      and scrolled lines, (Y/N) questions, paging, time limits that say
+      what was waited for
+    - SICK::Target::CiscoSB::Transport::SSH: the connection through the ssh
+      program of the system, old key exchange and host key algorithms on
+      request, host key checking always on
+    - SICK::Target::CiscoSB::Transport::Replay: recorded dialogs in place of
+      a switch, for tests
+    - docs/device-notes.md: what an SG300-20 with firmware 1.4.11.5 does,
+      dialog by dialog
