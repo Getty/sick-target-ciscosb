@@ -138,7 +138,11 @@ C<host_key_check> is C<strict> by default: the host key of the switch has
 to be in the known hosts file already, and C<ssh> refuses to connect
 otherwise. C<accept-new> stores the key of a switch that is not in the file
 yet and still refuses one whose key has changed. There is no way to turn
-the check off.
+the check off - and no way around it either: when C<ssh> cannot write the
+known hosts file (a read-only home directory in a container, for instance),
+it would go on with a warning and accept whatever key it is shown, this
+time and every time after. The transport ends the connection instead,
+before anything is sent, and L</error> says why.
 
 =cut
 
@@ -247,6 +251,7 @@ sub open {
   $self->{stderr} = q{};
   $self->{eof}    = 0;
   delete $self->{status};
+  delete $self->{unpinned};
   return $self;
 }
 
@@ -315,6 +320,17 @@ sub read {
       $self->_ended;
       return undef;
     }
+    if ( defined $data ) {
+      # what ssh has to say about the host key comes before the first byte
+      # of the switch; make sure it has been read before that byte is used
+      $self->_drain_stderr;
+    }
+    if ( $self->{stderr} =~ /^(Failed to add the host to the list of known hosts[^\r\n]*)/m ) {
+      $self->{unpinned} = $1;
+      kill 'TERM', $self->{pid};
+      $self->_ended;
+      return undef;
+    }
     return $data if defined $data;
     return q{} if $left <= 0;
   }
@@ -332,6 +348,9 @@ C<undef> when the connection has ended.
 
 sub error {
   my ( $self ) = @_;
+  return $self->{unpinned}.'; without a stored host key every connection would accept whatever key it is shown'
+    .' - set known_hosts to a file that can be written'
+    if defined $self->{unpinned};
   my $text = $self->{stderr};
   $text =~ s/\r//g;
   # what ssh says at this log level about a connection that works
@@ -366,7 +385,10 @@ C<undef> when there is nothing to report.
 
 Three failures come with what to do about them: no common algorithm
 (C<; set legacy_algorithms for this device>), an unknown or changed host
-key, and a switch that wants SSH authentication.
+key, and a switch that wants SSH authentication. A fourth is of the
+transport's own making: C<ssh> could not store a new host key
+(C<Failed to add the host to the list of known hosts (...)>), and the
+transport ended the connection rather than go on unchecked.
 
 =cut
 
@@ -432,6 +454,21 @@ sub _reap {
     return undef if Time::HiRes::time() >= $deadline;
     Time::HiRes::sleep(0.02);
   }
+}
+
+# What ssh has written to standard error up to now, without waiting.
+sub _drain_stderr {
+  my ( $self ) = @_;
+  my $err = $self->{err};
+  return unless $err && $self->{select} && $self->{select}->exists($err);
+  my $only = IO::Select->new($err);
+  while ( $only->can_read(0) ) {
+    my $n = sysread $err, my $buffer, 65536;
+    next if !defined $n && $!{EINTR};
+    last unless $n;
+    $self->{stderr} .= $buffer;
+  }
+  return;
 }
 
 # Standard output is at its end: ssh is going away. Collect what it still

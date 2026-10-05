@@ -114,11 +114,15 @@ saved yet, not only the certificate.
 
 C<strict> (the default): the host key of the switch has to be in the known
 hosts file already. C<accept-new>: the key of a switch that is not in the
-file yet is stored there, a key that has changed is still refused.
+file yet is stored there, a key that has changed is still refused. When the
+key cannot be stored - a known hosts file that cannot be written - the
+connection fails: C<ssh> itself would only warn and go on, and a key that
+is not remembered is not checked the next time either.
 
 =item C<known_hosts>
 
-A known hosts file to use instead of F<~/.ssh/known_hosts>.
+A known hosts file to use instead of the one of C<ssh>
+(F<~/.ssh/known_hosts>, or what its configuration says).
 
 =back
 
@@ -130,9 +134,11 @@ key: C<rsa2048> or C<rsa3072>, with C<mode: import> also C<rsa4096>.
 =head2 What the switch does not do
 
 It stores one certificate per slot and presents exactly that: the
-intermediate certificates of a CA are not installed, and clients need them
-from somewhere else. Give SICK a C<root> file that holds the intermediate
-as well as the root, and distribute both. EC keys are refused.
+intermediate certificates of a CA are not installed. SICK needs them to
+recognize the presented certificate as one of its CA - name the file as
+C<intermediates> in the C<ca> section of the device list
+(L<SICK::Issuer::StepCA/intermediates>) - and clients need them from
+somewhere else than the switch. EC keys are refused.
 
 =cut
 

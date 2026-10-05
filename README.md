@@ -22,6 +22,7 @@ in to the switch over SSH and types what you would type.
 ca:
   url: https://ca.example.internal:9000
   root: /etc/sick/root_ca.crt
+  intermediates: /etc/sick/intermediate_ca.crt
   provisioner: sick
   password_file: /etc/sick/provisioner.pw
 devices:
@@ -97,7 +98,7 @@ an error message.
 | `slot` | `1` | which of the two certificate slots (`1` or `2`) is filled and made active |
 | `mode` | `import` | `import`: SICK makes the key and pastes key and certificate. `csr`: the switch writes a certificate request for its own key |
 | `save` | `true` | `copy running-config startup-config` afterwards – which saves *everything* unsaved on the switch |
-| `host_key_check` | `strict` | `strict`: the host key has to be in the known hosts file. `accept-new`: a switch that is not in the file yet is added, a changed key is still refused |
+| `host_key_check` | `strict` | `strict`: the host key has to be in the known hosts file. `accept-new`: a switch that is not in the file yet is added, a changed key is still refused. A file that cannot be written fails the connection – a key that is not remembered is not checked |
 | `known_hosts` | that of `ssh` | a known hosts file of your choice |
 
 `host`, `port` (HTTPS, `443`), `names`, `lifetime`, `renew_before` and `key`
@@ -121,9 +122,12 @@ up to a minute and a half.
 ### What you should know about these switches
 
 - **One certificate, no chain.** The switch stores and presents the
-  certificate alone. Clients need the intermediate certificate of your CA
-  from somewhere else, and SICK needs it to recognize the certificate as its
-  own: let the `root` file of the device list hold root *and* intermediate.
+  certificate alone. SICK needs the intermediate certificate of your CA to
+  recognize that certificate as its own: name it as `ca.intermediates` in the
+  device list (step-ca: `certs/intermediate_ca.crt`), or the switch is
+  `foreign-ca` on every run and gets a new certificate every time. Clients
+  need the intermediate as well, from somewhere else than the switch: a
+  browser that only has the root does not accept the certificate.
 - **RSA only.** EC keys are refused by the switch, and by this target before
   it connects.
 - **A wrong certificate costs the key.** Given a certificate that does not
@@ -150,7 +154,10 @@ lines behind them, redrawn and scrolled lines, `(Y/N)` questions, paging, and
 a time limit on every wait that says what was waited for.
 `SICK::Target::CiscoSB::Transport::SSH` carries the bytes through the `ssh`
 program of the system (`$SICK_SSH`, else `ssh` from the `PATH`); your
-`~/.ssh/config` applies, which is how a jump host is set up.
+`~/.ssh/config` applies, which is how a jump host is set up. In a container
+with a read-only file system, give `ssh` a known hosts file it can write
+(`known_hosts`, or `UserKnownHostsFile` in its configuration – the Docker
+image of SICK does the latter).
 `SICK::Target::CiscoSB::Transport::Replay` plays a recorded dialog instead –
 the tests run on it.
 

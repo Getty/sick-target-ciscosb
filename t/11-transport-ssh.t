@@ -30,7 +30,7 @@ chmod 0755, $ssh or die 'chmod: '.$!;
 my $log = $dir.'/calls.log';
 local $ENV{SICK_SSH}     = $ssh;
 local $ENV{FAKE_SSH_LOG} = $log;
-delete @ENV{qw( FAKE_SSH_MODE FAKE_SSH_STDERR FAKE_SSH_KEX )};
+delete @ENV{qw( FAKE_SSH_MODE FAKE_SSH_STDERR FAKE_SSH_KEX FAKE_SSH_WARNING )};
 
 # calls() -> the calls since the last look, each an array reference of arguments
 sub calls {
@@ -183,6 +183,35 @@ subtest 'no connection' => sub {
   $transport->open;
   read_all( $transport, 5 );
   like( $transport->error, qr/\ANo RSA host key is known for 192\.0\.2\.10 .*Host key verification failed\.; add the key of the switch to known_hosts, or set host_key_check to accept-new\z/s, 'unknown host key: what to do' );
+  calls();
+};
+
+subtest 'a host key that cannot be stored' => sub {
+  # OpenSSH 10 with StrictHostKeyChecking=accept-new and a known hosts file
+  # it cannot write: it says so and goes on - unchecked, now and next time
+  local $ENV{FAKE_SSH_WARNING} = 'Failed to add the host to the list of known hosts (/nonexistent/.ssh/known_hosts).';
+  my $transport = $CLASS->new( host => '192.0.2.10', user => 'admin', host_key_check => 'accept-new' );
+  $transport->open;
+  my $pid = $transport->pid;
+  is( read_all( $transport, 5 ), q{}, 'nothing of the switch is handed on, not even its first prompt' );
+  ok( !defined $transport->read(0.1), 'the connection is over' );
+  ok( !$transport->is_open, '... and the transport knows' );
+  is( $transport->error,
+    'Failed to add the host to the list of known hosts (/nonexistent/.ssh/known_hosts).'
+      .'; without a stored host key every connection would accept whatever key it is shown'
+      .' - set known_hosts to a file that can be written',
+    'error: the words of ssh, why that is fatal and what to do' );
+  dies_like( sub { $transport->write("admin\r") }, qr/\Athe connection to 192\.0\.2\.10 port 22 is closed/, 'nothing can be sent' );
+  $transport->close;
+  ok( !kill( 0, $pid ), 'ssh is gone' );
+
+  # a key that was stored is no reason to stop
+  local $ENV{FAKE_SSH_WARNING} = "Warning: Permanently added '192.0.2.10' (RSA) to the list of known hosts.";
+  $transport = $CLASS->new( host => '192.0.2.10', user => 'admin', host_key_check => 'accept-new' );
+  $transport->open;
+  like( read_all( $transport, 5, qr/User Name:/ ), qr/User Name:\z/, 'a key that was stored: the session goes on' );
+  is( $transport->error, undef, '... and there is nothing to report' );
+  $transport->close;
   calls();
 };
 

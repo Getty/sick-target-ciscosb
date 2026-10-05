@@ -416,7 +416,11 @@ saved.
 Because the switch presents the certificate alone, a client needs the
 intermediate certificates of the CA from somewhere else - and so does SICK
 when it decides whether the presented certificate is from its CA: the
-`root` of the device list has to hold the intermediate as well.
+device list names them as `ca.intermediates`. (Putting the intermediate
+into the `ca.root` file does not work with step-ca: `step` refuses a root
+file with more than one certificate.) Seen with step-ca 0.30.2 on
+2026-10-05: without `ca.intermediates` the switch is `foreign-ca` again
+right after a successful run, with it the second run says `unchanged`.
 
 ## Timing
 
@@ -474,4 +478,6 @@ moment in the memory of the machine SICK runs on.
 - a restart of the switch or its web server while the active slot is empty;
 - common names with blanks or other characters that need quoting - the
   target refuses them;
-- a request signed by a real step-ca.
+- a request (mode `csr`) signed by a real step-ca. Mode `import` with a
+  real step-ca 0.30.2 is what the Docker setup of SICK runs; see
+  `docker/README.md` there.

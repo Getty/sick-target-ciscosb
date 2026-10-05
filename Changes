@@ -15,7 +15,9 @@ Revision history for SICK-Target-CiscoSB
       what was waited for
     - SICK::Target::CiscoSB::Transport::SSH: the connection through the ssh
       program of the system, old key exchange and host key algorithms on
-      request, host key checking always on
+      request, host key checking always on - a host key that ssh cannot
+      store (a known hosts file that cannot be written) ends the connection
+      instead of being accepted unchecked every time
     - SICK::Target::CiscoSB::Transport::Replay: recorded dialogs in place of
       a switch, for tests
     - docs/device-notes.md: what an SG300-20 with firmware 1.4.11.5 does,
