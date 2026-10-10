@@ -1,0 +1,20 @@
+---
+class: standard
+completed: 2026-10-10T06:13:18Z
+created: 2026-10-10T06:04:58Z
+id: 1
+priority: high
+started: 2026-10-10T06:13:18Z
+status: done
+tags:
+- stack
+- docs
+title: 'CLAUDE.md: replace the dependency rule'
+updated: 2026-10-10T06:13:18Z
+---
+
+CLAUDE.md says "Dependencies: core Perl and SICK ... Classes are plain bless". That rule was never the maintainer s: the first build of SICK took "as few dependencies as possible" as his requirement, while he had said "gern soviel von anderen nehmen wie möglich" and wants the house stack (Moo, Path::Tiny, JSON::MaybeXS). ../sick/CLAUDE.md is already corrected (its first rule); this file still tells every session here the opposite.
+
+Done when the rule reads like the one in ../sick/CLAUDE.md: Perl follows the house rules, the code does not look like that yet and is converted on a card.
+
+What stays in that paragraph, because it is a finding and not a rule of taste: the transport is the ssh program, Net::LibSSH 0.004 cannot do what is needed (docs/device-notes.md), and external programs never go through a shell.
