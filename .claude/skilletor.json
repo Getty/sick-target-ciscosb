@@ -1,10 +1,12 @@
 {
   "sources": {
     "getty": {
-      "git": "https://github.com/Getty/skills"
+      "git": "https://github.com/Getty/skills.git",
+      "ref": "main"
     },
     "karr": {
-      "git": "https://github.com/Getty/karr"
+      "git": "https://github.com/Getty/karr.git",
+      "ref": "main"
     },
     "sick": {
       "git": "https://github.com/Getty/sick.git"
