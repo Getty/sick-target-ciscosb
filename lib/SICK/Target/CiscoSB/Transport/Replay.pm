@@ -1,10 +1,12 @@
 package SICK::Target::CiscoSB::Transport::Replay;
 # ABSTRACT: Play a recorded dialog with a switch back to SICK::Target::CiscoSB
 
-use strict;
-use warnings;
+use Moo;
+with 'SICK::Target::CiscoSB::Transport';
 use Carp qw( croak );
 use Time::HiRes ();
+use Types::Standard qw( Bool Int Str );
+use namespace::autoclean;
 
 our $VERSION = '0.001';
 
@@ -43,8 +45,11 @@ a dialog to its end has also checked every byte that was sent.
 
 =cut
 
-sub new {
-  my ( $class, %arg ) = @_;
+# The checks and messages of the constructor come first; the types are the
+# second line.
+around BUILDARGS => sub {
+  my ( $orig, $class, @args ) = @_;
+  my %arg = %{ $class->$orig(@args) };
   croak 'SICK::Target::CiscoSB::Transport::Replay->new needs a script'
     unless ref $arg{script} eq 'ARRAY';
   my @script;
@@ -58,17 +63,8 @@ sub new {
       close => $step->{close} ? 1 : 0
     };
   }
-  return bless {
-    script  => \@script,
-    at      => 0,
-    pending => [],
-    partial => q{},
-    written => [],
-    open    => 0,
-    eof     => 0,
-    error   => $arg{error}
-  }, $class;
-}
+  return { script => \@script, ( defined $arg{error} ? ( error => $arg{error} ) : () ) };
+};
 
 =method new
 
@@ -100,22 +96,37 @@ fails.
 
 =cut
 
+# The steps, as the constructor normalized them. The script, what the
+# session wrote and what is pending hold passwords, pasted keys and what the
+# switch said: no types there, whose messages would repeat them.
+has _script => ( is => 'ro', init_arg => 'script', required => 1 );
+# error is a method, not this attribute: the role wants it when it is composed.
+has _error  => ( is => 'ro', isa => Str, init_arg => 'error' );
+
+# Where the dialog is. It moves with every write and read, hence rw.
+has _at      => ( is => 'rw', isa => Int,  init_arg => undef, default => 0 );
+has _pending => ( is => 'ro', init_arg => undef, default => sub { [] } );
+has _partial => ( is => 'rw', init_arg => undef, default => q{} );
+has _written => ( is => 'ro', init_arg => undef, default => sub { [] } );
+has _open    => ( is => 'rw', isa => Bool, init_arg => undef, default => 0 );
+has _eof     => ( is => 'rw', isa => Bool, init_arg => undef, default => 0 );
+
 sub open {
   my ( $self ) = @_;
-  $self->{open} = 1;
+  $self->_open(1);
   $self->_advance;
   return $self;
 }
 
-sub is_open { $_[0]->{open} && !$_[0]->{eof} ? 1 : 0 }
+sub is_open { $_[0]->_open && !$_[0]->_eof ? 1 : 0 }
 
 sub close {
   my ( $self ) = @_;
-  $self->{open} = 0;
+  $self->_open(0);
   return;
 }
 
-sub error    { $_[0]->{error} }
+sub error    { $_[0]->_error }
 sub describe { 'the replayed switch' }
 
 =method open
@@ -128,33 +139,33 @@ sub describe { 'the replayed switch' }
 
 =method describe
 
-The interface of a transport, see L<SICK::Target::CiscoSB::Transport::SSH>.
+The interface of a transport, see L<SICK::Target::CiscoSB::Transport>.
 
 =cut
 
 sub write {
   my ( $self, $bytes ) = @_;
-  croak 'replay: write on a closed connection' unless $self->{open};
-  push @{ $self->{written} }, $bytes;
-  $self->{partial} .= $bytes;
+  croak 'replay: write on a closed connection' unless $self->_open;
+  push @{ $self->_written }, $bytes;
+  $self->_partial( $self->_partial.$bytes );
 
-  my $step = $self->{script}[ $self->{at} ];
-  croak 'replay: the script is at its end, but the session wrote '._show( $self->{partial} )
+  my $step = $self->_script->[ $self->_at ];
+  croak 'replay: the script is at its end, but the session wrote '.$self->_show( $self->_partial )
     unless $step;
   my $expected = $step->{send};
-  croak 'replay: step '.$self->{at}.' is not waiting for a write, but the session wrote '
-    ._show( $self->{partial} )
+  croak 'replay: step '.$self->_at.' is not waiting for a write, but the session wrote '
+    .$self->_show( $self->_partial )
     unless defined $expected;
 
-  if ( $self->{partial} eq $expected ) {
-    $self->{partial} = q{};
+  if ( $self->_partial eq $expected ) {
+    $self->_partial(q{});
     $self->_release($step);
-    $self->{at}++;
+    $self->_at( $self->_at + 1 );
     $self->_advance;
   }
-  elsif ( index( $expected, $self->{partial} ) != 0 ) {
-    croak 'replay: step '.$self->{at}.' expects '._show($expected).', but the session wrote '
-      ._show( $self->{partial} );
+  elsif ( index( $expected, $self->_partial ) != 0 ) {
+    croak 'replay: step '.$self->_at.' expects '.$self->_show($expected).', but the session wrote '
+      .$self->_show( $self->_partial );
   }
   return length $bytes;
 }
@@ -171,15 +182,15 @@ came.
 
 sub read {
   my ( $self, $seconds ) = @_;
-  if ( @{ $self->{pending} } ) {
-    my $chunk = shift @{ $self->{pending} };
+  if ( @{ $self->_pending } ) {
+    my $chunk = shift @{ $self->_pending };
     if ( ref $chunk ) {    # the switch hangs up here
-      $self->{eof} = 1;
+      $self->_eof(1);
       return undef;
     }
     return $chunk;
   }
-  return undef if $self->{eof};
+  return undef if $self->_eof;
   Time::HiRes::sleep($seconds) if defined $seconds && $seconds > 0;
   return q{};
 }
@@ -196,12 +207,12 @@ connection.
 
 sub done {
   my ( $self ) = @_;
-  return $self->{at} >= @{ $self->{script} } && !@{ $self->{pending} } ? 1 : 0;
+  return $self->_at >= @{ $self->_script } && !@{ $self->_pending } ? 1 : 0;
 }
 
-sub written { @{ $_[0]->{written} } }
+sub written { @{ $_[0]->_written } }
 
-sub position { $_[0]->{at} }
+sub position { $_[0]->_at }
 
 =method done
 
@@ -221,24 +232,24 @@ The index of the step the script waits at.
 
 sub _release {
   my ( $self, $step ) = @_;
-  push @{ $self->{pending} }, @{ $step->{recv} };
-  push @{ $self->{pending} }, \'close' if $step->{close};
+  push @{ $self->_pending }, @{ $step->{recv} };
+  push @{ $self->_pending }, \'close' if $step->{close};
   return;
 }
 
 # Steps without "send" are what the switch says unasked.
 sub _advance {
   my ( $self ) = @_;
-  while ( my $step = $self->{script}[ $self->{at} ] ) {
+  while ( my $step = $self->_script->[ $self->_at ] ) {
     last if defined $step->{send};
     $self->_release($step);
-    $self->{at}++;
+    $self->_at( $self->_at + 1 );
   }
   return;
 }
 
 sub _show {
-  my ( $bytes ) = @_;
+  my ( $self, $bytes ) = @_;
   $bytes =~ s/([^\x20-\x7e])/sprintf '\\x%02x', ord $1/ge;
   return '"'.$bytes.'"';
 }

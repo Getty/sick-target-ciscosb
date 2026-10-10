@@ -1,8 +1,8 @@
 package SICK::Target::CiscoSB::Transport::SSH;
 # ABSTRACT: Reach the command line of a switch through the ssh program
 
-use strict;
-use warnings;
+use Moo;
+with 'SICK::Target::CiscoSB::Transport';
 use Carp qw( croak );
 use Errno ();
 use IO::Handle;
@@ -10,6 +10,8 @@ use IO::Select;
 use POSIX qw( WNOHANG );
 use SICK::Command;
 use Time::HiRes ();
+use Types::Standard qw( Bool Enum Int Maybe Str );
+use namespace::autoclean;
 
 our $VERSION = '0.001';
 
@@ -47,22 +49,9 @@ The program is C<ssh> from the C<PATH>, or C<$ENV{SICK_SSH}> when that is
 set. Your F<~/.ssh/config> applies as it does for every C<ssh> call, which
 is how a jump host is configured.
 
-=head2 The interface of a transport
-
-    $transport->open;                    # dies when it cannot even start
-    $transport->write($bytes);           # dies when the connection is gone
-    my $bytes = $transport->read($seconds);
-    $transport->close;
-    $transport->is_open;
-    $transport->error;                   # what it knows about a failure, or undef
-    $transport->describe;                # '192.0.2.10 port 22', for messages
-
-C<read> returns what arrived, waiting at most C<$seconds> for the first
-byte: the empty string when nothing came, C<undef> when the connection has
-ended. That is all a session needs, and all another transport has to
-provide - L<SICK::Target::CiscoSB::Transport::Replay> does it without a
-network, and one built on an SSH library could do it without the C<ssh>
-program.
+The interface it implements is the role
+L<SICK::Target::CiscoSB::Transport>; L<SICK::Target::CiscoSB::Transport::Replay>
+implements the same without a network.
 
 =cut
 
@@ -77,8 +66,11 @@ my @LEGACY = (
 
 my %KNOWN = map { $_ => 1 } qw( host port user legacy_algorithms known_hosts host_key_check connect_timeout );
 
-sub new {
-  my ( $class, %arg ) = @_;
+# The checks and messages of the constructor come first; the types are the
+# second line.
+around BUILDARGS => sub {
+  my ( $orig, $class, @args ) = @_;
+  my %arg = %{ $class->$orig(@args) };
   my @unknown = sort grep { !$KNOWN{$_} } keys %arg;
   croak $class.'->new: unknown argument \''.$unknown[0].'\'' if @unknown;
 
@@ -97,17 +89,16 @@ sub new {
   croak $class.'->new: invalid known_hosts'
     if defined $arg{known_hosts} && ( ref $arg{known_hosts} || !length $arg{known_hosts} || $arg{known_hosts} =~ /[\x00-\x1f]/ );
 
-  return bless {
+  return {
     host              => $arg{host},
     port              => $port + 0,
     user              => $arg{user},
     legacy_algorithms => $arg{legacy_algorithms} ? 1 : 0,
     known_hosts       => $arg{known_hosts},
     host_key_check    => $check,
-    connect_timeout   => $timeout + 0,
-    stderr            => q{}
-  }, $class;
-}
+    connect_timeout   => $timeout + 0
+  };
+};
 
 =method new
 
@@ -144,14 +135,62 @@ it would go on with a warning and accept whatever key it is shown, this
 time and every time after. The transport ends the connection instead,
 before anything is sent, and L</error> says why.
 
+Croaks with C<< <class>->new needs a host >>, C<< ... needs a user >>,
+C<< ... invalid host >> (and so on for every argument) and
+C<< ... unknown argument '<name>' >>.
+
 =cut
 
-sub host { $_[0]->{host} }
-sub port { $_[0]->{port} }
-sub user { $_[0]->{user} }
-sub pid  { $_[0]->{pid} }
+has host              => ( is => 'ro', isa => Str,  required => 1 );
+has port              => ( is => 'ro', isa => Int,  required => 1 );
+# The user name comes from the credentials file: no type, whose message
+# would repeat it. The constructor has checked it.
+has user              => ( is => 'ro', required => 1 );
+has legacy_algorithms => ( is => 'ro', isa => Bool, required => 1 );
+has known_hosts       => ( is => 'ro', isa => Maybe [Str] );
+has host_key_check    => ( is => 'ro', isa => Enum [qw( strict accept-new )], required => 1 );
+has connect_timeout   => ( is => 'ro', isa => Int,  required => 1 );
 
-sub describe { $_[0]->{host}.' port '.$_[0]->{port} }
+=attr host
+
+=attr port
+
+=attr user
+
+=attr legacy_algorithms
+
+=attr known_hosts
+
+=attr host_key_check
+
+=attr connect_timeout
+
+The arguments of L</new> with their defaults applied, C<legacy_algorithms>
+as C<1> or C<0>.
+
+=cut
+
+# The running ssh and its pipes, from open until close. Connection state
+# changes over the life of the object, hence rw.
+has pid       => ( is => 'ro', init_arg => undef, writer => '_set_pid', clearer => '_clear_pid' );
+has _in       => ( is => 'rw', init_arg => undef, clearer => 1 );
+has _out      => ( is => 'rw', init_arg => undef, clearer => 1 );
+has _err      => ( is => 'rw', init_arg => undef, clearer => 1 );
+has _select   => ( is => 'rw', init_arg => undef, clearer => 1 );
+has _eof      => ( is => 'rw', init_arg => undef, default => 0 );
+# What ssh wrote to standard error and how it ended. No type: the text is
+# what ssh said.
+has _stderr   => ( is => 'rw', init_arg => undef, default => q{} );
+has _status   => ( is => 'rw', init_arg => undef, predicate => 1, clearer => 1 );
+has _unpinned => ( is => 'rw', init_arg => undef, predicate => 1, clearer => 1 );
+
+=attr pid
+
+The process ID of C<ssh> while the connection is open, otherwise C<undef>.
+
+=cut
+
+sub describe { $_[0]->host.' port '.$_[0]->port }
 
 =method describe
 
@@ -163,31 +202,34 @@ sub program {
   return defined $ENV{SICK_SSH} && length $ENV{SICK_SSH} ? $ENV{SICK_SSH} : 'ssh';
 }
 
-sub command {
+# Built once: with legacy_algorithms it asks ssh -Q.
+has _command => ( is => 'lazy', init_arg => undef );
+
+sub _build__command {
   my ( $self ) = @_;
-  return @{ $self->{command} } if $self->{command};
   my $program = $self->program;
   my @options = (
     'BatchMode=yes',
     'PubkeyAuthentication=no',
     'PasswordAuthentication=no',
     'KbdInteractiveAuthentication=no',
-    'StrictHostKeyChecking='.( $self->{host_key_check} eq 'strict' ? 'yes' : 'accept-new' ),
-    ( defined $self->{known_hosts} ? 'UserKnownHostsFile='.$self->{known_hosts} : () ),
-    'ConnectTimeout='.$self->{connect_timeout},
+    'StrictHostKeyChecking='.( $self->host_key_check eq 'strict' ? 'yes' : 'accept-new' ),
+    ( defined $self->known_hosts ? 'UserKnownHostsFile='.$self->known_hosts : () ),
+    'ConnectTimeout='.$self->connect_timeout,
     'ServerAliveInterval=0',    # the switch does not answer while it makes a key
     'ControlMaster=no',
     'ControlPath=none',
     'LogLevel=INFO',            # "Unable to negotiate" is not an error to ssh
-    ( $self->{legacy_algorithms} ? $self->_legacy_options($program) : () ),
+    ( $self->legacy_algorithms ? $self->_legacy_options($program) : () ),
   );
-  $self->{command} = [
+  return [
     $program, '-tt', '-e', 'none', '-a', '-x',
     ( map { ( '-o', $_ ) } @options ),
-    '-p', $self->{port}, '-l', $self->{user}, $self->{host},
+    '-p', $self->port, '-l', $self->user, $self->host,
   ];
-  return @{ $self->{command} };
 }
+
+sub command { @{ $_[0]->_command } }
 
 =method program
 
@@ -204,7 +246,7 @@ C<ssh -Q> once which algorithms it has.
 
 sub open {
   my ( $self ) = @_;
-  croak 'the connection to '.$self->describe.' is already open' if $self->{pid};
+  croak 'the connection to '.$self->describe.' is already open' if $self->pid;
   my @command = $self->command;
 
   pipe( my $in_r,   my $in_w )   or croak 'cannot create a pipe: '.$!;
@@ -243,15 +285,15 @@ sub open {
   }
 
   binmode $_ for $in_w, $out_r, $err_r;
-  $self->{pid}    = $pid;
-  $self->{in}     = $in_w;
-  $self->{out}    = $out_r;
-  $self->{err}    = $err_r;
-  $self->{select} = IO::Select->new( $out_r, $err_r );
-  $self->{stderr} = q{};
-  $self->{eof}    = 0;
-  delete $self->{status};
-  delete $self->{unpinned};
+  $self->_set_pid($pid);
+  $self->_in($in_w);
+  $self->_out($out_r);
+  $self->_err($err_r);
+  $self->_select( IO::Select->new( $out_r, $err_r ) );
+  $self->_stderr(q{});
+  $self->_eof(0);
+  $self->_clear_status;
+  $self->_clear_unpinned;
   return $self;
 }
 
@@ -265,7 +307,7 @@ first L</read>: C<ssh> ends when it does not, and L</error> has its words.
 
 =cut
 
-sub is_open { $_[0]->{pid} && !$_[0]->{eof} ? 1 : 0 }
+sub is_open { $_[0]->pid && !$_[0]->_eof ? 1 : 0 }
 
 =method is_open
 
@@ -275,11 +317,12 @@ True from L</open> until the connection ends or L</close> is called.
 
 sub write {
   my ( $self, $bytes ) = @_;
-  croak 'the connection to '.$self->describe.' is closed' unless $self->is_open && $self->{in};
+  croak 'the connection to '.$self->describe.' is closed' unless $self->is_open && $self->_in;
   local $SIG{PIPE} = 'IGNORE';
+  my $in     = $self->_in;
   my $offset = 0;
   while ( $offset < length $bytes ) {
-    my $n = syswrite $self->{in}, $bytes, length($bytes) - $offset, $offset;
+    my $n = syswrite $in, $bytes, length($bytes) - $offset, $offset;
     if ( defined $n ) { $offset += $n; next }
     next if $!{EINTR};
     croak 'cannot write to '.$self->describe.': '.$!;
@@ -304,16 +347,16 @@ sub read {
   while (1) {
     my $left = $deadline - Time::HiRes::time();
     $left = 0 if $left < 0;
-    my @ready = $self->{select}->can_read($left);
+    my @ready = $self->_select->can_read($left);
     return q{} unless @ready;
 
     my $data;
     for my $fh (@ready) {
       my $n = sysread $fh, my $buffer, 65536;
       next if !defined $n && ( $!{EINTR} || $!{EAGAIN} );
-      if ( $fh == $self->{err} ) {
-        if ($n) { $self->{stderr} .= $buffer }
-        else    { $self->{select}->remove($fh) }
+      if ( $fh == $self->_err ) {
+        if ($n) { $self->_stderr( $self->_stderr.$buffer ) }
+        else    { $self->_select->remove($fh) }
         next;
       }
       if ($n) { $data = $buffer; next }
@@ -325,9 +368,9 @@ sub read {
       # of the switch; make sure it has been read before that byte is used
       $self->_drain_stderr;
     }
-    if ( $self->{stderr} =~ /^(Failed to add the host to the list of known hosts[^\r\n]*)/m ) {
-      $self->{unpinned} = $1;
-      kill 'TERM', $self->{pid};
+    if ( $self->_stderr =~ /^(Failed to add the host to the list of known hosts[^\r\n]*)/m ) {
+      $self->_unpinned($1);
+      kill 'TERM', $self->pid;
       $self->_ended;
       return undef;
     }
@@ -348,21 +391,21 @@ C<undef> when the connection has ended.
 
 sub error {
   my ( $self ) = @_;
-  return $self->{unpinned}.'; without a stored host key every connection would accept whatever key it is shown'
+  return $self->_unpinned.'; without a stored host key every connection would accept whatever key it is shown'
     .' - set known_hosts to a file that can be written'
-    if defined $self->{unpinned};
-  my $text = $self->{stderr};
+    if $self->_has_unpinned;
+  my $text = $self->_stderr;
   $text =~ s/\r//g;
   # what ssh says at this log level about a connection that works
   $text =~ s/^(?:Warning: Permanently added|\*\*) [^\n]*\n?//mg;
   $text =~ s/\A\s+//;
   $text =~ s/\s+\z//;
   unless ( length $text ) {
-    return undef unless $self->{status};
-    my $status = $self->{status};
+    return undef unless $self->_status;
+    my $status = $self->_status;
     return $self->program.( $status & 127 ? ' was ended by signal '.( $status & 127 ) : ' exited with status '.( $status >> 8 ) );
   }
-  if ( $text =~ /no matching (?:key exchange method|host key type|cipher|MAC) found/i && !$self->{legacy_algorithms} ) {
+  if ( $text =~ /no matching (?:key exchange method|host key type|cipher|MAC) found/i && !$self->legacy_algorithms ) {
     $text .= '; set legacy_algorithms for this device';
   }
   elsif ( $text =~ /Host key verification failed/i ) {
@@ -394,15 +437,18 @@ transport ended the connection rather than go on unchecked.
 
 sub close {
   my ( $self ) = @_;
-  my $pid = delete $self->{pid};
-  for my $handle (qw( in out err )) {
-    my $fh = delete $self->{$handle} or next;
+  my $pid = $self->pid;
+  $self->_clear_pid;
+  for my $handle (qw( _in _out _err )) {
+    my $fh = $self->$handle or next;
+    my $clear = '_clear'.$handle;
+    $self->$clear;
     CORE::close $fh;
   }
-  delete $self->{select};
-  $self->{eof} = 1;
+  $self->_clear_select;
+  $self->_eof(1);
   return unless $pid;
-  return if exists $self->{status};
+  return if $self->_has_status;
 
   # closing its input ends ssh; give it a moment before saying so louder
   my $status = $self->_reap( $pid, 1 );
@@ -422,7 +468,7 @@ sub close {
     $transport->close;
 
 Ends the connection and waits for C<ssh> to go away. May be called any
-number of times.
+number of times, and is called when the transport goes away.
 
 =cut
 
@@ -459,14 +505,14 @@ sub _reap {
 # What ssh has written to standard error up to now, without waiting.
 sub _drain_stderr {
   my ( $self ) = @_;
-  my $err = $self->{err};
-  return unless $err && $self->{select} && $self->{select}->exists($err);
+  my $err = $self->_err;
+  return unless $err && $self->_select && $self->_select->exists($err);
   my $only = IO::Select->new($err);
   while ( $only->can_read(0) ) {
     my $n = sysread $err, my $buffer, 65536;
     next if !defined $n && $!{EINTR};
     last unless $n;
-    $self->{stderr} .= $buffer;
+    $self->_stderr( $self->_stderr.$buffer );
   }
   return;
 }
@@ -475,26 +521,19 @@ sub _drain_stderr {
 # has to say and its status.
 sub _ended {
   my ( $self ) = @_;
-  $self->{eof} = 1;
-  my $err = $self->{err};
-  if ( $err && $self->{select}->exists($err) ) {
+  $self->_eof(1);
+  my $err = $self->_err;
+  if ( $err && $self->_select->exists($err) ) {
     my $only = IO::Select->new($err);
     while ( $only->can_read(1) ) {
       my $n = sysread $err, my $buffer, 65536;
       next if !defined $n && $!{EINTR};
       last unless $n;
-      $self->{stderr} .= $buffer;
+      $self->_stderr( $self->_stderr.$buffer );
     }
   }
-  my $status = $self->_reap( $self->{pid}, 2 );
-  $self->{status} = $status if defined $status;
-  return;
-}
-
-sub DESTROY {
-  my ( $self ) = @_;
-  local ( $@, $!, $? );
-  $self->close;
+  my $status = $self->_reap( $self->pid, 2 );
+  $self->_status($status) if defined $status;
   return;
 }
 

@@ -22,3 +22,9 @@ Revision history for SICK-Target-CiscoSB
       a switch, for tests
     - docs/device-notes.md: what an SG300-20 with firmware 1.4.11.5 does,
       dialog by dialog
+    - SICK::Target::CiscoSB, its Session and both transports are Moo classes;
+      the transports share the role SICK::Target::CiscoSB::Transport, which
+      the session requires, and the target checks key against certificate with
+      SICK::Bundle's key_matches (needs the SICK core at or after its
+      key_matches change). Depends on Moo, namespace::autoclean, Type::Tiny
+      and Path::Tiny.

@@ -1,15 +1,17 @@
 package SICK::Target::CiscoSB;
 # ABSTRACT: SICK target for Cisco Small Business switches (Sx300, SG300, SG500)
 
-use strict;
-use warnings;
-use parent 'SICK::Target';
+use Moo;
+extends 'SICK::Target';
 use Carp qw( croak );
+use Path::Tiny ();
 use Scalar::Util ();
 use SICK::OpenSSL;
 use SICK::Target::CiscoSB::Session;
 use SICK::Target::CiscoSB::Transport::SSH;
 use Time::HiRes ();
+use Types::Standard qw( CodeRef );
+use namespace::autoclean;
 
 our $VERSION = '0.001';
 
@@ -150,15 +152,16 @@ my %BITS = ( rsa2048 => 2048, rsa3072 => 3072, rsa4096 => 4096 );
 sub required_options { qw( credentials ) }
 sub optional_options { qw( ssh_port legacy_algorithms slot mode save host_key_check known_hosts ) }
 
-sub new {
-  my ( $class, %arg ) = @_;
-  my $factory = delete $arg{transport};
+# The checks and messages of the constructor come first (those of
+# SICK::Target before this one); the type is the second line.
+around BUILDARGS => sub {
+  my ( $orig, $class, @args ) = @_;
+  my $arg = $class->$orig(@args);
   croak $class.'->new: transport must be a code reference'
-    if defined $factory && ref $factory ne 'CODE';
-  my $self = $class->SUPER::new(%arg);
-  $self->{transport_factory} = $factory;
-  return $self;
-}
+    if defined $arg->{transport} && ref $arg->{transport} ne 'CODE';
+  delete $arg->{transport} unless defined $arg->{transport};
+  return $arg;
+};
 
 =method new
 
@@ -167,9 +170,23 @@ sub new {
 Like L<SICK::Target/new>. One more argument is for tests: C<transport>, a
 code reference that is called with the target and the user name and returns
 the transport of the session in place of an SSH connection - a
-L<SICK::Target::CiscoSB::Transport::Replay>, say.
+L<SICK::Target::CiscoSB::Transport::Replay>, say. It is kept as
+L</transport_factory>. Croaks with
+C<< SICK::Target::CiscoSB->new: transport must be a code reference >>.
 
 =cut
+
+has transport_factory => ( is => 'ro', isa => CodeRef, init_arg => 'transport' );
+
+=attr transport_factory
+
+The code reference given as C<transport> to L</new>, or C<undef>: then
+L</transport> connects with SSH.
+
+=cut
+
+# The session of csr that deploy carries on in; it comes and goes, hence rw.
+has _current_session => ( is => 'rw', init_arg => undef, clearer => 1 );
 
 sub slot           { defined $_[0]->option('slot') ? $_[0]->option('slot') + 0 : 1 }
 sub mode           { defined $_[0]->option('mode') ? $_[0]->option('mode') : 'import' }
@@ -371,7 +388,8 @@ makes the key.
 
 sub deploy {
   my ( $self, $bundle ) = @_;
-  croak 'deploy needs a SICK::Bundle' unless ref $bundle && eval { $bundle->can('cert') && $bundle->can('key') };
+  croak 'deploy needs a SICK::Bundle'
+    unless ref $bundle && eval { $bundle->can('cert') && $bundle->can('key') && $bundle->can('key_matches') };
   my $slot  = $self->slot;
   my @lines = $self->_import_lines($bundle);
 
@@ -465,7 +483,7 @@ the bundle is not an RSA key, and the switch is left as it was.
 
 sub transport {
   my ( $self, $user ) = @_;
-  return $self->{transport_factory}->( $self, $user ) if $self->{transport_factory};
+  return $self->transport_factory->( $self, $user ) if $self->transport_factory;
   my ($host) = $self->endpoint;
   return SICK::Target::CiscoSB::Transport::SSH->new(
     host              => $host,
@@ -489,7 +507,8 @@ device.
 
 sub close {
   my ( $self ) = @_;
-  my $session = delete $self->{session} or return;
+  my $session = $self->_current_session or return;
+  $self->_clear_current_session;
   $session->close;
   return;
 }
@@ -519,12 +538,10 @@ sub _boolean {
 sub _credentials {
   my ( $self ) = @_;
   my $path = $self->option('credentials');
-  open my $fh, '<', $path
-    or croak 'cannot read credentials file \''.$path.'\': '.$!;
-  croak 'cannot read credentials file \''.$path.'\': Is a directory' if -d $fh;
-  my @lines = <$fh>;
-  CORE::close $fh;
-  splice @lines, 2;
+  my $file = Path::Tiny::path($path);
+  croak 'cannot read credentials file \''.$path.'\': Is a directory' if $file->is_dir;
+  my @lines = eval { $file->lines_raw( { count => 2 } ) };
+  croak 'cannot read credentials file \''.$path.'\': '.$self->_reason($@) if $@;
   s/\r?\n\z// for @lines;
   croak 'credentials file \''.$path.'\' has no user name on line 1'
     unless defined $lines[0] && $lines[0] =~ /\S/;
@@ -540,8 +557,9 @@ sub _credentials {
 
 sub _session {
   my ( $self ) = @_;
-  return $self->{session} if $self->{session} && $self->{session}->is_open;
-  delete $self->{session};
+  my $current = $self->_current_session;
+  return $current if $current && $current->is_open;
+  $self->_clear_current_session;
 
   my ( $user, $password ) = $self->_credentials;
   my $transport = $self->transport($user);
@@ -554,7 +572,7 @@ sub _session {
     log       => sub { $target->log( $_[0] ) if $target },
   );
   $session->login( $user, $password, timeout => $self->login_timeout );
-  $self->{session} = $session;
+  $self->_current_session($session);
   die 'the user has no privileged command line on the switch (prompt \''.$session->prompt.'\')'."\n"
     unless $session->privileged;
   return $session;
@@ -598,14 +616,12 @@ sub _slot_certificate {
   return defined $pem ? $pem."\n" : undef;
 }
 
-# The public key of a certificate ('x509') or of a private key ('rsa') in
-# one comparable form, or undef.
+# The public key of a certificate in one comparable form, or undef. For two
+# certificates: SICK::Bundle::key_matches compares a private key with its
+# certificate, and the switch never shows its private key.
 sub _public_key {
-  my ( $self, $kind, $pem ) = @_;
-  my ( $out, $err, $exit ) = SICK::OpenSSL::run(
-    [ $kind eq 'x509' ? ( 'x509', '-noout', '-pubkey' ) : ( 'rsa', '-pubout' ) ],
-    stdin => $pem,
-  );
+  my ( $self, $pem ) = @_;
+  my ( $out, $err, $exit ) = SICK::OpenSSL::run( [ 'x509', '-noout', '-pubkey' ], stdin => $pem );
   return undef if $exit || $out !~ /-----BEGIN PUBLIC KEY-----/;
   $out =~ s/\s+//g;
   return $out;
@@ -620,8 +636,8 @@ sub _check_slot_key {
   my $have = $self->_slot_certificate($session);
   die 'slot '.$slot.' of the switch has no key, and the certificate comes without one'."\n"
     unless defined $have;
-  my $slot_key = $self->_public_key( x509 => $have );
-  my $new_key  = $self->_public_key( x509 => $bundle->cert );
+  my $slot_key = $self->_public_key($have);
+  my $new_key  = $self->_public_key( $bundle->cert );
   die 'the certificate is not for the key in slot '.$slot.' of the switch; it was not imported, because the switch'
     .' deletes the key of a slot when it is given a certificate that does not fit'."\n"
     unless defined $slot_key && defined $new_key && $slot_key eq $new_key;
@@ -654,15 +670,24 @@ sub _import_lines {
     ( my $public, $err, $exit ) = SICK::OpenSSL::run( [ 'rsa', '-RSAPublicKey_out' ], stdin => $bundle->key );
     croak $refused if $exit || $public !~ /\A-----BEGIN RSA PUBLIC KEY-----\n/;
 
-    # the switch deletes the key of a slot when certificate and key disagree
-    my $of_key  = $self->_public_key( rsa  => $bundle->key );
-    my $of_cert = $self->_public_key( x509 => $bundle->cert );
+    # The switch deletes the key of a slot when certificate and key
+    # disagree. SICK::Runner compares them as well; this is the target's own
+    # look, before it connects. key_matches croaks on what openssl cannot
+    # read, which is a mismatch here as it was before.
     croak 'the key of the bundle is not the key of its certificate'
-      unless defined $of_key && defined $of_cert && $of_key eq $of_cert;
+      unless eval { $bundle->key_matches };
     push @pem, $private, $public;
   }
   push @pem, $bundle->cert;
   return grep { length } map { split /\r?\n/ } @pem;
+}
+
+# The reason of the system out of a Path::Tiny exception.
+sub _reason {
+  my ( $self, $error ) = @_;
+  return $error->{err} if ref $error eq 'Path::Tiny::Error';
+  ( $error = defined $error ? $error : q{} ) =~ s/ at \S+ line [0-9]+\.?\s*\z//;
+  return length $error ? $error : 'unknown error';
 }
 
 sub _first_line {
@@ -674,7 +699,7 @@ sub _first_line {
   return length $line > 200 ? substr( $line, 0, 197 ).'...' : $line;
 }
 
-sub DESTROY {
+sub DEMOLISH {
   my ( $self ) = @_;
   local ( $@, $!, $? );
   $self->close;

@@ -1,10 +1,11 @@
 package SICK::Target::CiscoSB::Session;
 # ABSTRACT: The command line dialog with a Cisco Small Business switch
 
-use strict;
-use warnings;
+use Moo;
 use Carp qw( croak );
 use Time::HiRes ();
+use Types::Standard qw( CodeRef ConsumerOf Num );
+use namespace::autoclean;
 
 our $VERSION = '0.001';
 
@@ -104,26 +105,23 @@ my $YES_NO = qr/\(Y\/N\)\s*(?:\[[A-Za-z]\])?\s*\??[ \t]*\z/;
 # The prompt of any switch, for as long as its name is not known.
 my $ANY_PROMPT = qr/(?:\A|\n)([^\s#>()]+)(\([^()\n]*\))?([#>]) ?\z/;
 
-sub new {
-  my ( $class, %arg ) = @_;
+my $TRANSPORT = 'SICK::Target::CiscoSB::Transport';
+
+# The checks and messages of the constructor come first; the types are the
+# second line.
+around BUILDARGS => sub {
+  my ( $orig, $class, @args ) = @_;
+  my %arg = %{ $class->$orig(@args) };
   my $transport = $arg{transport};
   croak $class.'->new needs a transport'
-    unless ref $transport && eval { $transport->can('read') && $transport->can('write') && $transport->can('open') };
+    unless ref $transport && eval { $transport->DOES($TRANSPORT) };
   croak $class.'->new: log must be a code reference'
     if defined $arg{log} && ref $arg{log} ne 'CODE';
   croak $class.'->new: timeout must be a number of seconds'
     if defined $arg{timeout} && $arg{timeout} !~ /\A[0-9]+(?:\.[0-9]+)?\z/;
-  return bless {
-    transport => $transport,
-    log       => $arg{log},
-    timeout   => defined $arg{timeout} ? $arg{timeout} : 30,
-    raw       => q{},
-    open      => 0,
-    hostname  => undef,
-    mode      => q{},
-    sign      => '#'
-  }, $class;
-}
+  delete $arg{$_} for grep { !defined $arg{$_} } qw( log timeout );
+  return \%arg;
+};
 
 =method new
 
@@ -133,35 +131,56 @@ sub new {
       timeout   => 30,                              # optional, seconds
     );
 
-C<transport> is required: an object with C<open>, C<write>, C<read>,
-C<close>, C<is_open>, C<error> and C<describe>, see
-L<SICK::Target::CiscoSB::Transport::SSH>. C<log> is called with every
+C<transport> is required: an object that does the role
+L<SICK::Target::CiscoSB::Transport> - L<SICK::Target::CiscoSB::Transport::SSH>
+or L<SICK::Target::CiscoSB::Transport::Replay>. C<log> is called with every
 command that is sent. C<timeout> is how long the switch may take for one
 step unless the call says otherwise.
 
+Croaks with C<< <class>->new needs a transport >>,
+C<< <class>->new: log must be a code reference >> and
+C<< <class>->new: timeout must be a number of seconds >>.
+
 =cut
 
-sub transport  { $_[0]->{transport} }
-sub hostname   { $_[0]->{hostname} }
-sub mode       { $_[0]->{mode} }
-sub privileged { $_[0]->{sign} eq '#' ? 1 : 0 }
-sub is_open    { $_[0]->{open} && $_[0]->{transport}->is_open ? 1 : 0 }
+has transport => ( is => 'ro', isa => ConsumerOf [$TRANSPORT], required => 1 );
+has _logger   => ( is => 'ro', isa => CodeRef, init_arg => 'log', predicate => 1 );
+has timeout   => ( is => 'ro', isa => Num, default => 30 );
 
-sub prompt {
-  my ( $self ) = @_;
-  return undef unless defined $self->{hostname};
-  return $self->{hostname}.( length $self->{mode} ? '('.$self->{mode}.')' : q{} ).$self->{sign};
-}
-
-=method transport
+=attr transport
 
 The transport.
 
-=method hostname
+=attr timeout
+
+Seconds the switch may take for one step unless a call says otherwise. C<30>.
+
+=cut
+
+# Where the dialog is. It changes with every prompt, hence rw. No types:
+# the values come from what the switch sent, the password is the password.
+has hostname => ( is => 'ro', init_arg => undef, writer => '_set_hostname' );
+has mode     => ( is => 'ro', init_arg => undef, writer => '_set_mode', default => q{} );
+has _sign    => ( is => 'rw', init_arg => undef, default => '#' );
+has _raw     => ( is => 'rw', init_arg => undef, default => q{} );
+has _open    => ( is => 'rw', init_arg => undef, default => 0 );
+has _lost    => ( is => 'rw', init_arg => undef, default => 0 );
+has _secret  => ( is => 'rw', init_arg => undef, clearer => 1 );
+
+sub privileged { $_[0]->_sign eq '#' ? 1 : 0 }
+sub is_open    { $_[0]->_open && $_[0]->transport->is_open ? 1 : 0 }
+
+sub prompt {
+  my ( $self ) = @_;
+  return undef unless defined $self->hostname;
+  return $self->hostname.( length $self->mode ? '('.$self->mode.')' : q{} ).$self->_sign;
+}
+
+=attr hostname
 
 The name of the switch, taken from its prompt. C<undef> before L</login>.
 
-=method mode
+=attr mode
 
 The mode the switch is in according to its last prompt: empty for the
 command level, C<config> after C<configure terminal>.
@@ -187,24 +206,24 @@ sub login {
     unless defined $user && length $user && defined $password && length $password;
   croak 'not a user name' if $user =~ /[\x00-\x1f\x7f]/;
   croak 'the password must not contain control characters' if $password =~ /[\x00-\x1f\x7f]/;
-  my $timeout = defined $opt{timeout} ? $opt{timeout} : $self->{timeout};
+  my $timeout = defined $opt{timeout} ? $opt{timeout} : $self->timeout;
 
-  $self->{secret} = $password;
-  $self->{raw}    = q{};
-  $self->{transport}->open;
-  $self->{open} = 1;
+  $self->_secret($password);
+  $self->_raw(q{});
+  $self->transport->open;
+  $self->_open(1);
 
   $self->_await(
     'the \'User Name:\' prompt', $timeout,
     sub { $_[0] =~ /User ?Name: ?\z/i },
     connecting => 1,
   );
-  $self->{raw} = q{};
+  $self->_raw(q{});
   $self->_write( $user."\r" );
 
   # from here on the switch echoes: nothing it sends goes into a message
   $self->_await( 'the \'Password:\' prompt', $timeout, sub { $_[0] =~ /Password: ?\z/i }, quiet => 1 );
-  $self->{raw} = q{};
+  $self->_raw(q{});
   $self->_write( $password."\r" );
 
   my @prompt = $self->_await(
@@ -215,14 +234,14 @@ sub login {
     },
     quiet => 1,
   );
-  $self->{raw} = q{};
+  $self->_raw(q{});
   if ( $prompt[0] eq 'refused' ) {
     $self->close;
     croak 'login failed: the switch does not accept the user name and password';
   }
-  $self->{hostname} = $prompt[1];
+  $self->_set_hostname( $prompt[1] );
   $self->_set_prompt( $prompt[2], $prompt[3] );
-  $self->_log( 'logged in, the switch calls itself '.$self->{hostname} );
+  $self->_log( 'logged in, the switch calls itself '.$self->hostname );
 
   $self->command('terminal datadump') if !exists $opt{datadump} || $opt{datadump};
   return $self;
@@ -262,7 +281,7 @@ sub command {
   my ( $self, $line, %opt ) = @_;
   $self->_check_line( $line, 'not a command line' );
   croak 'the session is closed' unless $self->is_open;
-  my $timeout = defined $opt{timeout} ? $opt{timeout} : $self->{timeout};
+  my $timeout = defined $opt{timeout} ? $opt{timeout} : $self->timeout;
   my $after   = 'after \''.$line.'\'';
 
   $self->_log( 'sending: '.$line );
@@ -305,7 +324,7 @@ sub paste {
       if !defined $pasted || ref $pasted || !length $pasted || $pasted =~ /[\x00-\x1f\x7f]/ || $pasted =~ /\A\s*\.\s*\z/;
   }
   croak 'the session is closed' unless $self->is_open;
-  my $timeout = defined $opt{timeout} ? $opt{timeout} : $self->{timeout};
+  my $timeout = defined $opt{timeout} ? $opt{timeout} : $self->timeout;
   my $after   = 'after \''.$line.'\'';
 
   $self->_log( 'sending: '.$line );
@@ -325,7 +344,7 @@ sub paste {
     $self->_complain( $answer, $after );
     croak 'the switch did not ask for the input '.$after;
   }
-  $self->{raw} = q{};
+  $self->_raw(q{});
 
   # One line at a time, and the next one when the echo of this one is
   # there: the echo is the only flow control there is. What comes back is
@@ -340,7 +359,7 @@ sub paste {
       sub { $_[0] =~ /\n/ },
       quiet => 1, raw => 1,
     );
-    $self->{raw} = q{};
+    $self->_raw(q{});
   }
 
   # The answer starts behind the echo of the period - the period itself,
@@ -348,7 +367,7 @@ sub paste {
   my $period = qr/(?:\A|[\r\n])\.[\r ]*\n/;
   $self->_write(".\r");
   $self->_await( 'the echo of the closing period '.$after, $timeout, sub { $_[0] =~ $period }, quiet => 1, raw => 1 );
-  $self->{raw} =~ s/\A.*?$period//s;
+  $self->_raw( $self->_raw =~ s/\A.*?$period//sr );
   return $self->_answer( $timeout, $after );
 }
 
@@ -377,16 +396,16 @@ character or is a period by itself.
 
 sub close {
   my ( $self ) = @_;
-  my $was_open = $self->{open};
-  $self->{open} = 0;
-  my $transport = $self->{transport};
-  if ( $was_open && defined $self->{hostname} && !$self->{lost} && $transport->is_open ) {
+  my $was_open = $self->_open;
+  $self->_open(0);
+  my $transport = $self->transport;
+  if ( $was_open && defined $self->hostname && !$self->_lost && $transport->is_open ) {
     # be polite: leave config mode and log out, but do not wait for it
-    eval { $transport->write( ( length $self->{mode} ? "end\r" : q{} )."exit\r" ); $transport->read(0.3); 1 };
+    eval { $transport->write( ( length $self->mode ? "end\r" : q{} )."exit\r" ); $transport->read(0.3); 1 };
   }
   eval { $transport->close; 1 };
-  $self->{raw} = q{};
-  delete $self->{secret};
+  $self->_raw(q{});
+  $self->_clear_secret;
   return;
 }
 
@@ -395,7 +414,7 @@ sub close {
     $session->close;
 
 Logs out when the session is at a prompt and closes the transport. May be
-called any number of times.
+called any number of times, and is called when the session goes away.
 
 =cut
 
@@ -403,7 +422,7 @@ called any number of times.
 
 sub _log {
   my ( $self, $message ) = @_;
-  $self->{log}->($message) if $self->{log};
+  $self->_logger->($message) if $self->_has_logger;
   return;
 }
 
@@ -418,8 +437,8 @@ sub _set_prompt {
   my ( $self, $mode, $sign ) = @_;
   $mode = q{} unless defined $mode;
   $mode =~ s/\A\(|\)\z//g;
-  $self->{mode} = $mode;
-  $self->{sign} = $sign;
+  $self->_set_mode($mode);
+  $self->_sign($sign);
   return;
 }
 
@@ -428,7 +447,7 @@ sub _set_prompt {
 # mode, and # or >.
 sub _prompt_match {
   my ( $self, $text ) = @_;
-  my $name = quotemeta $self->{hostname};
+  my $name = quotemeta $self->hostname;
   return unless $text =~ /(?:\A|\n)(${name}(\([^()\n]*\))?([#>]) ?)\z/;
   return ( $-[1], $2, $3 );
 }
@@ -471,7 +490,7 @@ sub _clean {
 
 sub _write {
   my ( $self, $bytes ) = @_;
-  my $done = eval { $self->{transport}->write($bytes); 1 };
+  my $done = eval { $self->transport->write($bytes); 1 };
   return if $done;
   my $reason = $self->_transport_error;
   $self->_lose;
@@ -481,14 +500,14 @@ sub _write {
 # The session does not know any more where the switch is.
 sub _lose {
   my ( $self ) = @_;
-  $self->{lost} = 1;
+  $self->_lost(1);
   $self->close;
   return;
 }
 
 sub _transport_error {
   my ( $self ) = @_;
-  my $error = eval { $self->{transport}->error };
+  my $error = eval { $self->transport->error };
   return undef unless defined $error && $error =~ /\S/;
   $error =~ s/\A\s+//;
   $error =~ s/\s+\z//;
@@ -498,7 +517,7 @@ sub _transport_error {
 
 sub _scrub {
   my ( $self, $text ) = @_;
-  my $secret = $self->{secret};
+  my $secret = $self->_secret;
   $text =~ s/\Q$secret\E/***/g if defined $secret && length $secret;
   return $text;
 }
@@ -510,7 +529,7 @@ sub _await {
   my ( $self, $what, $timeout, $match, %opt ) = @_;
   my $deadline = Time::HiRes::time() + $timeout;
   while (1) {
-    my @found = $match->( $opt{raw} ? $self->{raw} : $self->_clean( $self->{raw} ) );
+    my @found = $match->( $opt{raw} ? $self->_raw : $self->_clean( $self->_raw ) );
     return @found if @found;
 
     my $left = $deadline - Time::HiRes::time();
@@ -521,22 +540,22 @@ sub _await {
         .( defined $last ? ' (last output: \''.$last.'\')' : q{} );
     }
 
-    my $bytes = $self->{transport}->read( $left < 0.5 ? $left : 0.5 );
+    my $bytes = $self->transport->read( $left < 0.5 ? $left : 0.5 );
     unless ( defined $bytes ) {
       my $reason = $self->_transport_error;
       $self->_lose;
-      croak 'cannot connect to '.$self->{transport}->describe.( defined $reason ? ': '.$reason : ': the connection was closed' )
+      croak 'cannot connect to '.$self->transport->describe.( defined $reason ? ': '.$reason : ': the connection was closed' )
         if $opt{connecting};
       croak 'the switch closed the connection while waiting for '.$what.( defined $reason ? ': '.$reason : q{} );
     }
-    $self->{raw} .= $bytes;
+    $self->_raw( $self->_raw.$bytes );
   }
 }
 
 # The last line that has something on it, for the message of a timeout.
 sub _last_line {
   my ( $self ) = @_;
-  my @lines = grep { /\S/ } split /\n/, $self->_clean( $self->{raw} );
+  my @lines = grep { /\S/ } split /\n/, $self->_clean( $self->_raw );
   return undef unless @lines;
   my $line = $lines[-1];
   $line =~ s/[^\x20-\x7e]/?/g;
@@ -552,10 +571,10 @@ sub _last_line {
 sub _send_line {
   my ( $self, $line, $timeout, $after ) = @_;
   while (1) {
-    my $bytes = $self->{transport}->read(0);
+    my $bytes = $self->transport->read(0);
     last unless defined $bytes && length $bytes;
   }
-  $self->{raw} = q{};
+  $self->_raw(q{});
   $self->_write( $line."\r" );
 
   my $tail = quotemeta substr( $line, -16 );
@@ -564,7 +583,7 @@ sub _send_line {
     sub { $_[0] =~ /${tail}[\r ]*\n/ },
     raw => 1,
   );
-  $self->{raw} =~ s/\A.*?${tail}[\r ]*\n//s;
+  $self->_raw( $self->_raw =~ s/\A.*?${tail}[\r ]*\n//sr );
   return;
 }
 
@@ -587,7 +606,7 @@ sub _answer {
         return ();
       },
     );
-    $self->{raw} = q{};
+    $self->_raw(q{});
     $answer .= $detail[0];
 
     if ( $kind eq 'prompt' ) {
@@ -610,7 +629,7 @@ sub _answer {
     $self->_write('N');
     eval { $self->_await( $expected, $timeout < 5 ? $timeout : 5, sub { $self->_prompt_match( $_[0] ) ? (1) : () } ); 1 }
       or croak 'the switch asks \''.$question.'\' '.$after.', and did not come back from the answer N';
-    $self->{raw} = q{};
+    $self->_raw(q{});
     croak 'the switch asks \''.$question.'\' '.$after.'; answered with N';
   }
 }
@@ -622,10 +641,10 @@ sub _complain {
   croak $1.' ('.$after.')';
 }
 
-sub DESTROY {
+sub DEMOLISH {
   my ( $self ) = @_;
   local ( $@, $!, $? );
-  $self->close if $self->{open};
+  $self->close if $self->_open;
   return;
 }
 
