@@ -1,0 +1,26 @@
+---
+claimed_at: 2026-10-10T16:15:09Z
+claimed_by: hub
+class: standard
+completed: 2026-10-10T16:15:09Z
+created: 2026-10-10T06:04:59Z
+id: 2
+priority: high
+started: 2026-10-10T16:15:09Z
+status: done
+tags:
+- setup
+title: Set up the agent team (.claude) as in ../sick
+updated: 2026-10-10T16:15:09Z
+---
+
+This repository has no .claude: no agents, no rules, no skills. ../sick has them since 2026-10-10 (sick-worker, sick-test-writer, sick-release-manager, .claude/rules/sick-rules.md, skill sick-core).
+
+Done when this repository has the same shape, built with skill getty-agent-team:
+- the shared skills installed with skilletor, and sick-core installed from ../sick (it holds the Target contract this distribution implements), not copied;
+- a worker for the device type, briefed with sick-core, the Perl house skills and what docs/device-notes.md demands;
+- rules whose hazards are the ones of this repository: t/90-live.t changes a real switch once its two SICK_LIVE_CISCOSB_* variables are set; a refused import empties the certificate slot; whatever the switch echoes during a paste is a private key and is never quoted; never type ahead and never send a question mark.
+
+Part of package P2 (house stack) in ../sick docs/roadmap.md: after sick k1-k9.
+
+Done by the hub in 2889480: .claude with sick-worker-ciscosb and sick-release-manager, rules sick-ciscosb-rules.md, shared skills via skilletor, sick-core from source sick (user-level local override ~/dev/sick on each machine). No test-writer: four modules, the worker owns t/. Checked: every briefed skill resolves, the briefing hook preloads both agents and denies an unknown skill, 44 tests green.
