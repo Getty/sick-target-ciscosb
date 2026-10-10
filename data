@@ -1,0 +1,37 @@
+---
+block_reason: 'needs sick#6: the base class SICK::Target moves to Moo first'
+blocked: true
+class: standard
+completed: 2026-10-10T19:09:47Z
+created: 2026-10-10T06:05:00Z
+id: 3
+priority: medium
+started: 2026-10-10T19:09:47Z
+status: done
+tags:
+- stack
+- moo
+- needs:sick#6
+title: 'Convert the device type to Moo: CiscoSB, Session, Transport::SSH, Transport::Replay'
+updated: 2026-10-10T19:10:02Z
+---
+
+SICK::Target::CiscoSB (684 lines), ::Session (632), ::Transport::SSH (501), ::Transport::Replay (246) are plain bless on core Perl, like SICK was. Target: the house stack, as in ../sick.
+
+Waits for sick#6, which converts the base class SICK::Target. Until then SICK::Target::CiscoSB is a use parent subclass and sick#6 promises to keep that working.
+
+Done when:
+- the four are Moo classes; the two transports share what they share through a role, since Session takes either;
+- nothing about the dialog changes: one command, then its prompt; the comparison of the public keys before an import; dropping what the switch echoes. docs/device-notes.md stays the source of truth and the recorded dialogs in t/lib/Test/SICK/CiscoSB.pm are not edited to make a test pass;
+- cpanfile names what is loaded;
+- PERL5LIB=../sick/lib:$PERL5LIB prove -lr t green. t/90-live.t is not run.
+
+Part of package P2 (house stack) in ../sick docs/roadmap.md: after sick k1-k9.
+
+2026-10-10 19:01 Started the conversion. sick#6 is done (SICK::Target is Moo since sick adde463); the Blocked field still names it - left for the orchestrator. Baseline: PERL5LIB=../sick/lib prove -lr t: Files=5, Tests=44, PASS; skipped: t/90-live.t only (SICK_LIVE_CISCOSB_* unset, not run).
+
+2026-10-10 19:07 Conversion done, tree commit-ready (not committed). CiscoSB: Moo, extends SICK::Target, around BUILDARGS keeps 'transport must be a code reference', transport_factory attr (init_arg transport), _current_session attr, DEMOLISH; key vs cert check before connecting now uses SICK::Bundle::key_matches (wrapped in eval, same message); slot-cert vs bundle-cert stays on openssl x509 -pubkey (key_matches needs a private key, the switch shows none); credentials read with Path::Tiny (same messages). Session, Transport::SSH, Transport::Replay: Moo, BUILDARGS keeps every constructor message, types only where no secret/switch output can be repeated. New role SICK::Target::CiscoSB::Transport (requires open write read close is_open error describe; DEMOLISH closes); Session now requires a transport that DOES it. cpanfile: +Moo, namespace::autoclean 0.16, Path::Tiny, Type::Tiny; SICK unpinned (needs key_matches from sick d71f55a, i.e. its first release). t/00-load.t: role loaded, both transports DOES it. Dialogs in t/lib untouched. Final: prove -lr t Files=5 Tests=47 PASS, skipped t/90-live.t only (not run); dzil build + dzil test PASS. Findings for cards: openssl rsa calls in _import_lines have no -passin (encrypted key would prompt on a tty); CLAUDE.md line 23 is stale after this card.
+
+sick#6 is done (adde463); the needs-link is satisfied.
+
+Committed as 63ed4c4 (Convert the device type to Moo). Not pushed.
