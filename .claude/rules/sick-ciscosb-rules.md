@@ -21,9 +21,8 @@ file is for the orchestrating agent.
    change code to turn it green.
 6. **Checkpoint and fail loud** — Summarize done / verified / left after each significant
    step. "Tests pass" says which ran: `t/90-live.t` is skipped unless asked for.
-7. **Surface conflicts, don't average them** — Where the code and the house rules
-   disagree, the house rules are right; where the code and the device notes disagree,
-   the notes are right until a new observation is written into them.
+7. **Surface conflicts, don't average them** — Where the code and the device notes
+   disagree, the notes are right until a new observation is written into them.
 
 ## Delegation
 
@@ -86,10 +85,10 @@ comment on or close one unasked.
 - **Recorded dialogs are evidence.** `t/lib/Test/SICK/CiscoSB.pm` replays what a switch
   said, under neutral names (`sw1`, `192.0.2.10`, user `admin`) and without certificates
   or keys. A dialog is not edited to make a test pass; it changes when the notes do.
-- **The code contradicts the house rules, and the house rules are right.** `lib/` is
-  plain `bless` on core Perl; the target is Moo and `Path::Tiny` (skills
-  `getty-perl-core`, `getty-perl-moo`). The conversion is a card. Never "fix" `CLAUDE.md`
-  or an agent back to match the code, and never convert a module in passing.
+- **Two checks look like one.** Key against certificate goes through
+  `SICK::Bundle::key_matches`, before the target connects. The certificate in the slot
+  of the switch is compared by public key through `openssl x509 -pubkey`, because there
+  is no private key to hand. Neither replaces the other.
 - **SICK is not installed.** `PERL5LIB=../sick/lib:$PERL5LIB prove -lr t`; without it
   every file fails at `use`. `../sick` moving is the usual reason for a red suite here:
   check its log before you look for the bug in this repository.

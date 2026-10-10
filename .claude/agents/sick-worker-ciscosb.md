@@ -56,14 +56,13 @@ dialog by dialog, and how that was observed.
   through a shell. `Net::LibSSH` cannot do what is needed here (notes, "Why not
   Net::LibSSH"); that is a finding, not a preference to revisit in passing.
 
-## The code you find is not the pattern to follow
+## Shape of the code
 
-The four modules are plain `bless` on core Perl, built on a rule nobody asked for. The
-house rules above are the target; the conversion is a card of its own and goes module by
-module, whole and with its tests. Until a module is converted, new code in it stays in
-its style — a module is one or the other, never half Moo. `Session` takes either
-transport: what the two share is a role, not a base class. A dependency you add goes
-into `cpanfile` in the same change.
+Four Moo classes and one role. `Session` takes either transport and demands the role
+`SICK::Target::CiscoSB::Transport`; what the two transports share goes into that role,
+never into a base class. A dependency you add goes into `cpanfile` in the same change —
+and into `docker/Dockerfile` of `../sick` as a note on your card, because the image
+installs this distribution too.
 
 ## Verification
 

@@ -27,11 +27,10 @@ run `dzil release` — the maintainer's call every time.
 
 ## The exceptions you will meet every run
 
-**1. The distribution is half way between two stacks.** It was first built on core Perl
-with plain `bless`, on a rule nobody asked for, and is converted to the house stack (Moo,
-`Path::Tiny`) on a card. A diff that adds one of those is the plan, not a finding. What
-you check is that `cpanfile` follows: every module used under `lib/` and not shipped
-with perl is named there, and a module no longer used is gone.
+**1. `cpanfile` follows the code.** Every module used under `lib/` and not shipped with
+perl is named there, and a module no longer used is gone. The image of `../sick`
+installs this distribution with its dependencies as Debian packages: a new dependency
+here needs a card over there, or the image breaks.
 
 **2. `SICK` is a dependency that is not on CPAN yet.** `cpanfile` names it without a
 version; tests run against the working copy beside this one
