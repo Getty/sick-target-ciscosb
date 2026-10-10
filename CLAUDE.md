@@ -28,18 +28,26 @@ Never `dzil release` without explicit permission. `LICENSE` is committed.
 - **No secrets** in code, tests, fixtures, logs or messages. The password is only
   ever written to the transport. Whatever the switch echoes during the login and
   during a paste (it echoes private keys) is dropped unread and never quoted.
-- **Recorded dialogs carry neutral names** (`sw1`, `192.0.2.10`, user `admin`) and no
-  certificates or keys: tests generate those at run time.
-- **Never send an import the switch will refuse for a key mismatch**: it answers by
-  deleting key and certificate of the slot (device notes, "The refusal that
-  destroys"). `deploy` compares the public keys first; keep that check.
-- **Never type ahead** at the switch and never send `?`. One command, then its
-  prompt. `Session::command` refuses control characters.
-- Unit tests need no network. `t/90-live.t` runs only with
-  `SICK_LIVE_CISCOSB_HOST` and `SICK_LIVE_CISCOSB_CREDENTIALS` set, and it
-  **changes the switch** (certificate, active slot, saved configuration).
+- **What can damage a switch or leak a key is in `.claude/rules/sick-ciscosb-rules.md`**
+  (hazards): the live test, the refusal that empties a slot, echo, typing ahead, the
+  recorded dialogs. Read them before the first change.
 - `# ABSTRACT:` lines are plain ASCII; every file under `lib/` carries its own
   `our $VERSION`.
+
+## Delegation
+
+Delegate behavior-relevant code to the right agent instead of touching it yourself — the
+principle, the lanes and this repo's hazards are in `.claude/rules/sick-ciscosb-rules.md`.
+
+| Task | Agent |
+|---|---|
+| Implement / refactor / debug / test anything under `lib/` and `t/` | `sick-worker-ciscosb` (default) |
+| Commits, `Changes`, card → done, pre-release audit | `sick-release-manager` |
+
+The agents carry their conventions via `briefing.skills` (see `.claude/agents/`); the main
+agent delegates rather than loading them. The skills under `.claude/skills/` are installed
+by skilletor (`.claude/skilletor.json`) and are changed in their source, never here —
+`sick-core`, the Target contract this distribution implements, comes from `../sick`.
 
 ## Layout
 
