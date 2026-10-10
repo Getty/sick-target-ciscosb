@@ -17,10 +17,14 @@ Never `dzil release` without explicit permission. `LICENSE` is committed.
   that depends on a behaviour of the switch has that behaviour written down there
   first, with how it was observed. Do not write a dialog from memory or from Cisco's
   manuals.
-- **Dependencies: core Perl and `SICK`.** The transport is the `ssh` program;
-  `Net::LibSSH` 0.004 cannot do what is needed (see the notes). Classes are plain
-  `bless`, external programs go through `SICK::Command` / `SICK::OpenSSL`, or the
-  fork/exec in `Transport::SSH` - never a shell.
+- **Perl follows the house rules** (skills `getty-perl-core`, `getty-perl-moo`): Moo for
+  classes, `Path::Tiny` for files, `JSON::MaybeXS` for JSON, and what CPAN already has is
+  taken from there. The code does not look like that yet: the first build ran on "core
+  Perl and `SICK`, plain `bless`", a rule the maintainer never gave. New code follows the
+  house rules; the existing modules are converted on a card.
+- **The transport is the `ssh` program.** `Net::LibSSH` 0.004 cannot do what is needed
+  (see the notes); that is a finding, not a rule of taste. External programs go through
+  `SICK::Command` / `SICK::OpenSSL`, or the fork/exec in `Transport::SSH` - never a shell.
 - **No secrets** in code, tests, fixtures, logs or messages. The password is only
   ever written to the transport. Whatever the switch echoes during the login and
   during a paste (it echoes private keys) is dropped unread and never quoted.
