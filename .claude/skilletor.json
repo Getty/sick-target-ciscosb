@@ -24,6 +24,9 @@
       "kanban-issues-karr-coordination@karr",
       "kanban-issues-karr-ticket@karr",
       "sick-core@sick"
+    ],
+    "bundles": [
+      "getty-cpan-dist@getty"
     ]
   },
   "targets": [
