@@ -1,0 +1,27 @@
+---
+claimed_at: 2026-10-26T22:41:50Z
+claimed_by: sick-worker-ciscosb
+class: standard
+completed: 2026-10-26T22:41:50Z
+created: 2026-10-11T08:20:58Z
+id: 6
+priority: high
+started: 2026-10-26T22:27:41Z
+status: done
+tags:
+- release
+- blocker
+title: 'Release blockers: require SICK 0.001; META repository from the SSH alias;
+  Changes as state'
+updated: 2026-10-26T22:41:50Z
+---
+
+From the release audit 2026-10-11 (report in ../sick handbook final report). (1) SICK is not on CPAN; pin requires 'SICK', '0.001' once released (SICK first). (2) origin is an SSH alias, so META repository/bugtracker are wrong and SUPPORT empty (cf. sick k74). (3) The last Changes bullet describes the Moo conversion as a step; rewrite as state. Non-blocking: CI red until SICK is on CPAN; Exporter missing under on test; tarball ships .claude/, CLAUDE.md, .github/ (prune, cf. sick k72).
+
+2026-10-26 21:51 2026-10-26: (1) done here — cpanfile pins SICK 0.001 ahead of CPAN (family is released together, sick-coordination); (2) origin is now git@github.com:Getty/sick-target-ciscosb.git, check META again at the next audit; the tarball shipping .claude/, CLAUDE.md, .github/ is the bundle default on the maintainer's word — no prune.
+
+2026-10-26 21:56 2026-10-26: (2) verified — dzil build writes repository and bugtracker on github.com/Getty/sick-target-ciscosb. Left: (3) the Changes bullet as state.
+
+2026-10-26: (3) last Changes bullet (Moo conversion) rewritten as state, with the k4/k5 behaviour folded in; wording is mine, adjust freely. Not committed, no move.
+
+Committed in 1be7ad2
