@@ -1,0 +1,24 @@
+---
+claimed_at: 2026-10-26T22:41:08Z
+claimed_by: sick-worker-ciscosb
+class: standard
+completed: 2026-10-26T22:41:08Z
+created: 2026-10-10T19:08:00Z
+id: 4
+priority: low
+started: 2026-10-26T22:26:52Z
+status: done
+tags:
+- finding
+- keys
+title: 'Pass -passin pass: to the openssl rsa calls in _import_lines'
+updated: 2026-10-26T22:41:08Z
+---
+
+Finding from k3 (2026-10-10). The two openssl rsa calls in SICK::Target::CiscoSB::_import_lines have no -passin; an encrypted bundle key would make openssl prompt on the terminal (SICK::Command does not detach it). Issuers hand out unencrypted keys, so low. Fix: -passin pass: as SICK::Bundle::key_matches does, with a test.
+
+2026-10-26: -passin pass: on both openssl rsa calls in _import_lines; t/20 deploys an encrypted PKCS#8 key and expects the RSA-only refusal, switch untouched. Caveat: that test also passes without the fix when no terminal is attached (openssl fails at its prompt by itself), so it pins behaviour, not the argument. prove -lr t green.
+
+2026-10-26 (Korrektur): Der Test in t/20 ist jetzt beweiskraeftig: ein Wrapper per SICK_OPENSSL protokolliert die argv jedes openssl-Aufrufs, der Test verlangt -passin pass: an jedem rsa-Aufruf. Ohne den Fix rot (not ok 'openssl rsa is told not to ask'), mit Fix gruen. Die frueher notierte Einschraenkung (gruen ohne Fix) gilt nicht mehr.
+
+Committed in 1be7ad2
