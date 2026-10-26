@@ -1,0 +1,22 @@
+---
+claimed_at: 2026-10-26T22:41:29Z
+claimed_by: sick-worker-ciscosb
+class: standard
+completed: 2026-10-26T22:41:29Z
+created: 2026-10-10T19:08:11Z
+id: 5
+priority: low
+started: 2026-10-26T22:27:30Z
+status: done
+tags:
+- finding
+- tests
+title: 'Tests: Replay error quotes written data; t/20 reaches into the object'
+updated: 2026-10-26T22:41:29Z
+---
+
+Findings from k3 (2026-10-10). (1) Transport::Replay's error on an unexpected write quotes what the session wrote - can be the test password or a pasted key line (test data only); quote a length or a redacted form instead. (2) t/20-deploy-replay.t does delete $target->{transport_factory}: works because the attribute uses that hash key, but fragile; use a constructor argument or a public way.
+
+2026-10-26: (1) Replay::_show now yields only 'N bytes' for written and expected data (script holds the password too); POD updated; t/10-session.t checks lengths and that no bytes appear. (2) t/20 target() takes own_transport => 1 instead of delete $target->{transport_factory}. prove -lr t green.
+
+Committed in 1be7ad2
