@@ -40,7 +40,8 @@ recorded. The tests of this distribution run on it, and it is the way to
 reproduce a dialog somebody else's switch had.
 
 It is strict. A write that is not the one the script expects next is an
-error then and there, with both sides in the message - so a test that plays
+error then and there, with the length of both sides in the message (never
+the bytes: they can be a password or a key) - so a test that plays
 a dialog to its end has also checked every byte that was sent.
 
 =cut
@@ -248,10 +249,11 @@ sub _advance {
   return;
 }
 
+# Only the length: what the session wrote can be a password or a line of a
+# private key, and the script holds the same.
 sub _show {
   my ( $self, $bytes ) = @_;
-  $bytes =~ s/([^\x20-\x7e])/sprintf '\\x%02x', ord $1/ge;
-  return '"'.$bytes.'"';
+  return length($bytes).' bytes';
 }
 
 1;

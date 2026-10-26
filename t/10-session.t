@@ -311,6 +311,18 @@ subtest 'what cannot be a command' => sub {
   is( scalar( $replay->written ), 3, 'nothing of that was sent' );
 };
 
+subtest 'the replay does not quote what was written' => sub {
+  my $secret = 'sekrit-line-of-a-key';
+  my $replay = SICK::Target::CiscoSB::Transport::Replay->new( script => [ { send => "expected-$secret\r", recv => 'x' } ] );
+  $replay->open;
+  my $error = dies_like( sub { $replay->write("wrong-$secret\r") }, qr/\Areplay: step 0 expects 30 bytes, but the session wrote 27 bytes/ , 'lengths in the message' );
+  unlike( $error, qr/\Q$secret\E/, 'nothing of the bytes is in it' );
+  $replay = SICK::Target::CiscoSB::Transport::Replay->new( script => [] );
+  $replay->open;
+  $error = dies_like( sub { $replay->write("late-$secret") }, qr/\Areplay: the script is at its end, but the session wrote 25 bytes/, 'at the end of the script' );
+  unlike( $error, qr/\Q$secret\E/, 'nothing of the bytes is in it either' );
+};
+
 subtest 'constructor' => sub {
   dies_like( sub { SICK::Target::CiscoSB::Session->new }, qr/needs a transport/, 'no transport' );
   dies_like( sub { SICK::Target::CiscoSB::Session->new( transport => bless( {}, 'Nothing' ) ) }, qr/needs a transport/, 'not a transport' );

@@ -24,6 +24,8 @@ Revision history for SICK-Target-CiscoSB
       dialog by dialog
     - SICK::Target::CiscoSB, its Session and both transports are Moo classes;
       the transports share the role SICK::Target::CiscoSB::Transport, which
-      the session requires, and the target checks key against certificate with
-      SICK::Bundle's key_matches. Depends on SICK 0.001, Moo,
-      namespace::autoclean, Type::Tiny and Path::Tiny.
+      the session requires. The target checks key against certificate with
+      SICK::Bundle's key_matches and never gives openssl a chance to ask for
+      a passphrase (an encrypted key is refused). Transport::Replay names
+      the length of unexpected writes, never their bytes. Depends on SICK
+      0.001, Moo, namespace::autoclean, Type::Tiny and Path::Tiny.

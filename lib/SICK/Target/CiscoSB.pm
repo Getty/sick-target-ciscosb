@@ -663,11 +663,11 @@ sub _import_lines {
   if ( defined $bundle->key ) {
     my $refused = 'the switch takes RSA keys only, and the key of this certificate is not one';
     my ( $private, $err, $exit ) = SICK::OpenSSL::run(
-      [ 'rsa', ( SICK::OpenSSL::major() >= 3 ? '-traditional' : () ) ],
+      [ 'rsa', '-passin', 'pass:', ( SICK::OpenSSL::major() >= 3 ? '-traditional' : () ) ],
       stdin => $bundle->key,
     );
     croak $refused if $exit || $private !~ /\A-----BEGIN RSA PRIVATE KEY-----\n/;
-    ( my $public, $err, $exit ) = SICK::OpenSSL::run( [ 'rsa', '-RSAPublicKey_out' ], stdin => $bundle->key );
+    ( my $public, $err, $exit ) = SICK::OpenSSL::run( [ 'rsa', '-passin', 'pass:', '-RSAPublicKey_out' ], stdin => $bundle->key );
     croak $refused if $exit || $public !~ /\A-----BEGIN RSA PUBLIC KEY-----\n/;
 
     # The switch deletes the key of a slot when certificate and key

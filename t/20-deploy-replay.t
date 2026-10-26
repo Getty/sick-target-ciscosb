@@ -65,6 +65,7 @@ my $exit = { send => "exit\r", close => 1 };
 # target( \%options, \@steps, %device ) -> ( $target, $replay, \@log )
 sub target {
   my ( $options, $steps, %device ) = @_;
+  my $own_transport = delete $device{own_transport};
   my $device = SICK::Device->new(
     name         => 'sw1',
     type         => 'cisco-sb',
@@ -82,7 +83,7 @@ sub target {
   my $target = SICK::Target::CiscoSB->new(
     device    => $device,
     log       => sub { push @log, $_[0] },
-    transport => sub { $opened++; $replay or die "no dialog was expected\n" },
+    ( $own_transport ? () : ( transport => sub { $opened++; $replay or die "no dialog was expected\n" } ) ),
   );
   return ( $target, $replay, \@log, \$opened );
 }
@@ -354,6 +355,32 @@ subtest 'deploy: what cannot be imported' => sub {
   $error = dies_like( sub { $target->deploy($mixed) }, qr/\Athe key of the bundle is not the key of its certificate/, 'a key that does not belong to the certificate' );
   is( $$opened, 0, 'is found out before the switch is bothered' );
 
+  # An encrypted key must be refused, not asked for: without -passin openssl
+  # prompts on the terminal of the process. A wrapper in place of openssl
+  # (SICK_OPENSSL) records the arguments of every call, so this holds without
+  # a terminal as well.
+  my $encrypted = SICK::OpenSSL::run_checked( [ 'pkcs8', '-topk8', '-v2', 'aes256', '-passout', 'pass:test' ], stdin => $bundle->key );
+  like( $encrypted, qr/\A-----BEGIN ENCRYPTED PRIVATE KEY-----/, 'a key that needs a passphrase' );
+  my $locked  = SICK::Bundle->new( cert => $bundle->cert, key => $encrypted );
+  my $calls   = $dir.'/openssl-calls';
+  my $wrapper = spew( $dir.'/openssl-wrapper', <<"WRAPPER", 0700 );
+#!$^X
+open my \$fh, '>>', '$calls' or die; print \$fh join( "\\x1f", \@ARGV ), "\\n"; close \$fh;
+exec { 'openssl' } 'openssl', \@ARGV or die;
+WRAPPER
+  ( $target, $replay, $log, $opened ) = target( {} );
+  {
+    local $ENV{SICK_OPENSSL} = $wrapper;
+    dies_like( sub { $target->deploy($locked) }, qr/\Athe switch takes RSA keys only, and the key of this certificate is not one/, 'an encrypted key is refused' );
+  }
+  is( $$opened, 0, 'is found out before the switch is bothered' );
+  my @rsa = grep { $_->[0] eq 'rsa' } map { [ split /\x1f/ ] } split /\n/, do { open my $in, '<', $calls or die 'cannot read '.$calls.': '.$!; local $/; <$in> };
+  ok( scalar @rsa, 'the wrapper saw the rsa calls' );
+  for my $call (@rsa) {
+    my $line = join q{ }, @$call;
+    like( $line, qr/ -passin pass:(?: |\z)/, 'openssl rsa is told not to ask: '.$line );
+  }
+
   my $keyless = SICK::Bundle->new( cert => $bundle->cert );
   ( $target, $replay ) = target( {}, [ login_steps(), show_cert_step( slot => 1, pem => $signed->cert ), $exit ] );
   dies_like( sub { $target->deploy($keyless) },
@@ -474,8 +501,7 @@ subtest 'csr: what goes wrong' => sub {
 };
 
 subtest 'the ssh connection of a device' => sub {
-  my ($target) = target( { ssh_port => 2222, legacy_algorithms => 0, known_hosts => '/etc/sick/known_hosts', host_key_check => 'accept-new' } );
-  delete $target->{transport_factory};
+  my ($target) = target( { ssh_port => 2222, legacy_algorithms => 0, known_hosts => '/etc/sick/known_hosts', host_key_check => 'accept-new' }, undef, own_transport => 1 );
   my $transport = $target->transport($USER);
   isa_ok( $transport, 'SICK::Target::CiscoSB::Transport::SSH' );
   is( $transport->describe, '192.0.2.10 port 2222', 'host of the device, ssh_port' );
@@ -485,8 +511,7 @@ subtest 'the ssh connection of a device' => sub {
   like( $line, qr/ -l \Q$USER\E 192\.0\.2\.10\z/,                 'the user of the credentials file' );
   ok( index( $line, $PASSWORD ) < 0, 'the password is not on the command line' );
 
-  ($target) = target( {}, undef, host => undef );
-  delete $target->{transport_factory};
+  ($target) = target( {}, undef, host => undef, own_transport => 1 );
   is( $target->transport($USER)->describe, 'sw1.example.internal port 22', 'without host: the first name' );
 };
 
