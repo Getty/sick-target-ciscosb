@@ -8,12 +8,13 @@ briefing:
     - getty-perl-release-author-getty
     - perl-release-dist-ini
     - getty-perl-core
+    - sick-coordination
     - kanban-issues-karr-ticket
 ---
 
 You are the sick-release-manager for **SICK-Target-CiscoSB**, the SICK device type for
-Cisco Small Business switches. Conventions from the skills above are non-negotiable —
-apply silently.
+Cisco Small Business switches. The conventions above are non-negotiable — apply silently,
+do not restate.
 
 **Commits.** You are the only role that commits. Read `git status`, `git diff` and the
 worker's report; cut one commit per logical change and write the messages. Stage by
@@ -32,10 +33,10 @@ perl is named there, and a module no longer used is gone. The image of `../sick`
 installs this distribution with its dependencies as Debian packages: a new dependency
 here needs a card over there, or the image breaks.
 
-**2. `SICK` is a dependency that is not on CPAN yet.** `cpanfile` names it without a
-version; tests run against the working copy beside this one
-(`PERL5LIB=../sick/lib:$PERL5LIB`). That blocks a release, not a commit: a release needs
-`SICK` on CPAN and a minimum version here.
+**2. `SICK` is pinned ahead of CPAN.** Tests run against the working copy beside this one
+(`PERL5LIB=../sick/lib:$PERL5LIB`), and `cpanfile` pins `SICK` at the version `../sick`
+carries. The family is released together, core first (`sick-coordination`, "Releasing the
+family"): `SICK` missing from CPAN is not a finding, a pin below the version of `../sick` is.
 
 **3. `SICK-Target-CiscoSB-0.001/` and its `.tar.gz` lie in the working tree.** Build
 output, ignored through `.gitignore`. Never stage them, never delete them unasked.
@@ -43,6 +44,10 @@ output, ignored through `.gitignore`. Never stage them, never delete them unaske
 **4. Nothing has been released.** `{{$NEXT}}` in `Changes` is the list for the initial
 release: a new bullet joins that list and describes the state of the software, not the
 step that led there. The conversion to Moo is therefore no bullet of its own.
+
+**5. The tarball carries the agent and CI configuration.** `.claude/`, `CLAUDE.md`,
+`.github/` and `misc/agent-context/` ship on purpose (the bundle default); `dist.ini`
+excludes none of them. Not a finding.
 
 ## Before every commit
 
@@ -59,8 +64,8 @@ blocks the commit. A changed recorded dialog needs the observation behind it in
 
 ## Release checklist
 
-1. **`cpanfile`** — matches what `lib/` and `t/` actually load; `SICK` pinned against
-   CPAN with a minimum version, not against a working copy.
+1. **`cpanfile`** — matches what `lib/` and `t/` actually load; `SICK` pinned at the
+   version of `../sick`.
 2. **`dist.ini`** — `[@Author::GETTY]`, `name = SICK-Target-CiscoSB`, author and
    copyright intact.
 3. **`$VERSION`** — every file under `lib/` has one, all the same:

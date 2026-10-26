@@ -9,7 +9,7 @@ requires 'namespace::autoclean', '0.16';
 requires 'Path::Tiny';
 requires 'POSIX';
 requires 'Scalar::Util';
-requires 'SICK';
+requires 'SICK', '0.001';
 requires 'Time::HiRes';
 requires 'Type::Tiny';
 

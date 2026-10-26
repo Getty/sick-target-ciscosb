@@ -23,7 +23,11 @@
       "getty-perl-release-author-getty@karr",
       "kanban-issues-karr-coordination@karr",
       "kanban-issues-karr-ticket@karr",
-      "sick-core@sick"
+      "sick-core@sick",
+      "sick-coordination@sick"
+    ],
+    "agents": [
+      "karr-coordinator@sick"
     ],
     "bundles": [
       "getty-cpan-dist@getty"
