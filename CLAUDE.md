@@ -15,7 +15,7 @@ the hazards before the first change — the other end of this code is a real swi
 ## Delegation
 
 Delegate behavior-relevant code to the right agent instead of touching it yourself —
-principle in the shared rule `getty-agent-delegation` (skilletor bundle
+principle in the shared rule `agent-delegation` (skilletor bundle
 `getty-cpan-dist@getty`), lanes in `.claude/rules/sick-ciscosb-rules.md`.
 
 | Task | Agent |
